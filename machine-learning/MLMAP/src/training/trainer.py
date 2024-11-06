@@ -3,6 +3,10 @@ import joblib
 import pandas as pd
 import numpy as np
 import hashlib
+
+from keras.src.callbacks import EarlyStopping
+from keras.src.layers import BatchNormalization
+from keras.src.utils import pad_sequences
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
@@ -44,12 +48,14 @@ class ModelTrainer:
         with open(fingerprint_path, 'w') as f:
             f.write(self.data_fingerprint)
 
-    def _calculate_checksum(self, model_path):
+    @staticmethod
+    def _calculate_checksum(model_path):
         with open(model_path, 'rb') as f:
             model_data = f.read()
         return hashlib.md5(model_data).hexdigest()
 
-    def save_model_checksums(self, rf_checksum, xgb_checksum, lstm_checksum):
+    @staticmethod
+    def save_model_checksums(rf_checksum, xgb_checksum, lstm_checksum):
         checksums_path = '../../models/stored/model_checksums.txt'
         with open(checksums_path, 'w') as f:
             f.write(f"Random Forest Checksum: {rf_checksum}\n")
@@ -66,7 +72,7 @@ class ModelTrainer:
             rf_predictions = rf_model.predict(self.X_test)
             rf_accuracy = accuracy_score(self.y_test, rf_predictions)
             rf_classification_report = classification_report(self.y_test, rf_predictions, zero_division=1)
-            rf_probabilities = rf_model.predict_proba(self.X_test)[:, 1]  
+            rf_probabilities = rf_model.predict_proba(self.X_test)[:, 1] 
 
             rf_checksum = self._calculate_checksum(model_path)
             return rf_accuracy, rf_classification_report, rf_probabilities.tolist(), rf_checksum
@@ -97,19 +103,23 @@ class ModelTrainer:
             xgb_predictions = xgb_model.predict(self.X_test)
             xgb_accuracy = accuracy_score(self.y_test, xgb_predictions)
             xgb_classification_report = classification_report(self.y_test, xgb_predictions, zero_division=1)
-            xgb_probabilities = xgb_model.predict_proba(self.X_test)[:, 1] 
-
+            xgb_probabilities = xgb_model.predict_proba(self.X_test)[:, 1]
             xgb_checksum = self._calculate_checksum(model_path)
             return xgb_accuracy, xgb_classification_report, xgb_probabilities.tolist(), xgb_checksum
 
         print("Training XGBoost with new data...")
-        xgb_model = XGBClassifier(random_state=42)
+        xgb_model = XGBClassifier(
+            n_estimators=100,
+            max_depth=5,
+            learning_rate=0.1,
+            random_state=42
+        )
         xgb_model.fit(self.X_train, self.y_train)
 
         xgb_predictions = xgb_model.predict(self.X_test)
         xgb_accuracy = accuracy_score(self.y_test, xgb_predictions)
         xgb_classification_report = classification_report(self.y_test, xgb_predictions, zero_division=1)
-        xgb_probabilities = xgb_model.predict_proba(self.X_test)[:, 1]  
+        xgb_probabilities = xgb_model.predict_proba(self.X_test)[:, 1]
 
         joblib.dump(xgb_model, model_path)
         self._save_data_fingerprint(fingerprint_path)
@@ -125,32 +135,39 @@ class ModelTrainer:
         if not self._is_data_new(model_path, fingerprint_path):
             print("LSTM: No new data to add! Loading existing model results...")
             lstm_model = self.load_lstm()
-            X_test_seq = np.expand_dims(self.X_test.values, axis=-1)
-            lstm_probabilities = lstm_model.predict(X_test_seq).flatten()  
+            X_test_seq = np.expand_dims(pad_sequences(self.X_test.values), axis=-1)
+            lstm_probabilities = lstm_model.predict(X_test_seq).flatten()
             lstm_predictions = (lstm_probabilities > 0.5).astype("int32")
             lstm_accuracy = accuracy_score(self.y_test, lstm_predictions)
             lstm_classification_report = classification_report(self.y_test, lstm_predictions, zero_division=1)
-
             lstm_checksum = self._calculate_checksum(model_path)
             return lstm_accuracy, lstm_classification_report, lstm_probabilities.tolist(), lstm_checksum
 
         print("Training LSTM with new data...")
-        X_train_seq = np.expand_dims(self.X_train.values, axis=-1)
-        X_test_seq = np.expand_dims(self.X_test.values, axis=-1)
+        X_train_seq = np.expand_dims(pad_sequences(self.X_train.values), axis=-1)
+        X_test_seq = np.expand_dims(pad_sequences(self.X_test.values), axis=-1)
+
+        X_train_seq = X_train_seq / np.max(X_train_seq)
+        X_test_seq = X_test_seq / np.max(X_test_seq)
 
         model = Sequential([
             Input(shape=(X_train_seq.shape[1], 1)),
             LSTM(64, return_sequences=True),
+            BatchNormalization(),
             Dropout(0.5),
             LSTM(32),
+            BatchNormalization(),
             Dropout(0.5),
             Dense(1, activation='sigmoid')
         ])
 
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        model.fit(X_train_seq, self.y_train, epochs=10, batch_size=32, verbose=1)
 
-        lstm_probabilities = model.predict(X_test_seq).flatten() 
+        early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+        model.fit(X_train_seq, self.y_train, epochs=50, batch_size=32, validation_split=0.2, callbacks=[early_stopping],
+                  verbose=1)
+
+        lstm_probabilities = model.predict(X_test_seq).flatten()
         lstm_predictions = (lstm_probabilities > 0.5).astype("int32")
         lstm_accuracy = accuracy_score(self.y_test, lstm_predictions)
         lstm_classification_report = classification_report(self.y_test, lstm_predictions, zero_division=1)

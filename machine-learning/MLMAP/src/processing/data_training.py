@@ -11,7 +11,7 @@ class DataPreprocessor:
         self.tfidf_vectorizer = None
 
     def fill_missing_values(self):
-        self.data.fillna({
+        self.data = self.data.fillna({
             "size": 0,
             "malscore": 0,
             "behavior_process_count": 0,
@@ -21,14 +21,14 @@ class DataPreprocessor:
             "process_calls": "",
             "signatures": "",
             "ttps": ""
-        }, inplace=True)
+        })
 
     def convert_hex_to_int(self, column_name):
         def hex_to_int(hex_value):
             try:
                 return int(hex_value, 16)
             except ValueError:
-                return 0 
+                return 0  
 
         if column_name in self.data.columns:
             self.data[column_name] = self.data[column_name].apply(hex_to_int)
@@ -85,6 +85,8 @@ class DataPreprocessor:
     def convert_columns_to_numeric(self):
         for column in self.data.columns:
             self.data[column] = pd.to_numeric(self.data[column], errors='coerce')
+            self.data[column] = self.data[column].replace([np.inf, -np.inf], np.nan)  # Gán lại giá trị cho cột
+            self.data[column] = self.data[column].fillna(0)  # Gán lại giá trị cho cột
 
     def normalize_numerical_columns(self):
         numerical_columns = ['size', 'malscore', 'behavior_process_count']
@@ -94,7 +96,7 @@ class DataPreprocessor:
     def preprocess(self):
         self.fill_missing_values()
 
-        for col in ['pe_imagebase', 'pe_entrypoint']: 
+        for col in ['pe_imagebase', 'pe_entrypoint']:  
             self.convert_hex_to_int(col)
 
         self.encode_categorical_columns()
@@ -103,6 +105,6 @@ class DataPreprocessor:
         self.convert_columns_to_numeric()
         self.normalize_numerical_columns()
 
-        self.data = self.data.drop(columns=['filename'], errors='ignore') 
+        self.data = self.data.drop(columns=['filename'], errors='ignore')  
 
         return self.data

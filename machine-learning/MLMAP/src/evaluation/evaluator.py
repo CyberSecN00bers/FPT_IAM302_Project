@@ -29,8 +29,9 @@ class ReportAnalyzer:
         else:
             raise AttributeError("Random Forest model does not have feature names.")
 
-        self.results = []  
-        self.probabilities = []  
+        self.results = []
+        self.probabilities = []
+        self.labels = [] 
 
     def analyze_reports(self):
         if os.path.isdir(self.reports_dir):
@@ -78,7 +79,7 @@ class ReportAnalyzer:
 
         score = self.calculate_score(predictions)
         label = 'Malicious' if score > 0.5 else 'Clean'
-        self.labels.append(label)  # Store true label for confusion matrix
+        self.labels.append(report_data.get("malstatus", "Suspicious"))
 
         self.results.append({
             "report_name": os.path.basename(report_file),
@@ -96,7 +97,7 @@ class ReportAnalyzer:
             data = json.load(file)
 
         if isinstance(data, list) and data:
-            data = data[0]  # Lấy phần tử đầu tiên trong danh sách
+            data = data[0]
 
         if not isinstance(data, dict):
             raise ValueError("Loaded data is not a valid report dictionary.")
@@ -107,6 +108,7 @@ class ReportAnalyzer:
     def extract_features(report_data):
         features = {}
 
+        # Basic file information
         target_info = report_data.get("target", {}).get("file", {})
         features["filename"] = target_info.get("name", "Unknown")
         features["size"] = target_info.get("size", 0) if target_info.get("size") is not None else 0
@@ -116,6 +118,7 @@ class ReportAnalyzer:
         features["ssdeep"] = target_info.get("ssdeep", "No-ssdeep")
         features["type"] = target_info.get("type", "")
 
+        # String information (yara, cape_yara)
         yara_info = target_info.get("yara", [])
         features["yara_names"] = " ".join([y["name"] for y in yara_info])
         features["yara_descriptions"] = ", ".join(
@@ -130,6 +133,7 @@ class ReportAnalyzer:
         features["cape_yara_strings"] = ", ".join(
             [s for cape in cape_yara_info for s in cape.get("strings", [])])
 
+        # PE information
         pe_info = target_info.get("pe", {})
         features["pe_digital_signers"] = ", ".join(pe_info.get("digital_signers", []))
         features["pe_imagebase"] = pe_info.get("imagebase", "0")
@@ -149,9 +153,11 @@ class ReportAnalyzer:
         features["pe_exports"] = ", ".join([exp["name"] for exp in pe_info.get("exports", [])])
         features["custom_strings"] = ", ".join(target_info.get("strings", []))
 
+        # Rating information
         features["malstatus"] = report_data.get("malstatus", "Suspicious")
         features["malscore"] = report_data.get("malscore", 0)
 
+        # Behavior and process information
         behav_info = report_data.get("behavior", {})
         features["behavior_process_count"] = len(behav_info.get("processes", []))
         features["call_api"] = ", ".join(call.get("api", "") for process in
@@ -161,6 +167,7 @@ class ReportAnalyzer:
                                    behav_info.get("processes", [])
                                    for call in process.get("calls", [])]
 
+        # Signature information
         signatures = report_data.get("signatures", [])
         features["sig_name"] = " ".join([sig.get("name", "") for sig in signatures])
         features["sig_description"] = " ".join([sig.get("description", "") for sig in signatures])
@@ -182,9 +189,9 @@ class ReportAnalyzer:
     def calculate_score(predictions):
         rf_score = np.mean(predictions["rf"])
         xgb_score = np.mean(predictions["xgb"])
-        # lstm_score = np.mean(predictions["lstm"])
+        lstm_score = np.mean(predictions["lstm"])
 
-        score = round((rf_score + xgb_score + 1) / 3 * 10, 1)  # Làm tròn đến 1 chữ số thập phân
+        score = round((rf_score + xgb_score + lstm_score) / 3 * 10, 1)  # Làm tròn đến 1 chữ số thập phân
         return score
 
     @staticmethod
@@ -200,14 +207,13 @@ class ReportAnalyzer:
 
         avg_scores = np.mean(scores, axis=0)
 
-        true_labels = ['Malicious' if label == 'Malicious' else 'Clean' for label in self.labels]
-        predictions = ['Malicious' if np.mean(prob) > 0.5 else 'Clean' for prob in self.probabilities]
-
-        cm = confusion_matrix(true_labels, predictions, labels=['Malicious', 'Clean'])
+        true_labels = [1 if label == "Malicious" else 0 for label in self.labels]
+        pred_labels = [1 if result["label"] == "Malicious" else 0 for result in self.results]
+        cm = confusion_matrix(true_labels, pred_labels, labels=[1, 0])
 
         fig, ax = plt.subplots(1, 2, figsize=(14, 6))
 
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax[0],
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Reds', ax=ax[0],
                     xticklabels=['Malicious', 'Clean'], yticklabels=['Malicious', 'Clean'])
         ax[0].set_title('Confusion Matrix')
         ax[0].set_xlabel('Predicted Labels')
@@ -237,7 +243,7 @@ class ReportAnalyzer:
         predictions_serializable['xgb']
         lstm_prob = predictions_serializable['lstm'][0] if isinstance(predictions_serializable['lstm'], list) else \
         predictions_serializable['lstm']
-        hybrid = (rf_prob + xgb_prob + lstm_prob) / 3
+        hybrid = round((rf_prob + xgb_prob + lstm_prob) / 3, 4)
 
         report_name = os.path.basename(report_file).replace('.json', '') + '_results'
         file_name = os.path.basename(report_file)
