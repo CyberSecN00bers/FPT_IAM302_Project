@@ -65,9 +65,9 @@ class DataExtractor:
                         [yara.get('meta', {}).get('description', 'unknown') for yara in target.get('yara', [])]),
                     "yara_strings": ", ".join(
                         [yara_string for yara in target.get('yara', []) for yara_string in yara.get('strings', [])]),
-                    "cape_yara_names": cape_yara_names,
-                    "cape_yara_descriptions": cape_yara_descriptions,  
-                    "cape_yara_strings": cape_yara_strings,  
+                    "cape_yara_names": cape_yara_names, 
+                    "cape_yara_descriptions": cape_yara_descriptions, 
+                    "cape_yara_strings": cape_yara_strings, 
                     "pe_digital_signers": ", ".join(target.get("pe", {}).get("digital_signers", [])),
                     "pe_imagebase": target.get("pe", {}).get("imagebase", "N/A"),
                     "pe_entrypoint": target.get("pe", {}).get("entrypoint", "N/A"),
@@ -107,8 +107,11 @@ class DataExtractor:
                 record.update(dynamic_features)
                 records.append(record)
 
-        df = pd.DataFrame(records)  
+        df = pd.DataFrame(records)
         logger.info(f"DataFrame columns after extraction: {df.columns.tolist()}")
+
+        # Print extracted data
+        # print(df)
 
         logger.info(f"Output directory: {self.output_dir}")
 
